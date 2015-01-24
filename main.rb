@@ -4,6 +4,75 @@ require 'dxruby'
 require 'forwardable'
 require_relative './lib/animative'
 
+ITEM_SOURCE = %w(
+  fire_element:1
+  water_element:1
+  air_element:1
+  earth_element:1
+  water_bottle:2
+  thunder_element:1
+  ore:2
+  ice_element:1
+  plant:2
+  harb:2
+  leaf:2
+  powder:2
+  bread:64
+  egg:32
+  meat:32
+  fish:32
+  steak:128
+  grape:32
+  wine:128
+  potion:256
+  elixir:2048
+  salt:32
+  bacteria:2
+  root:2
+  mashroom:4
+  pepper:2
+  berry:16
+  carrot:16
+  gold:512
+  electron:1024
+  pearl:1024
+  ruby:1024
+  diamond:2048
+)
+RECIPE_SOURCE = [
+  [:water_bottle, [:fire_element, :water_element]],
+  [:thunder_element, [:fire_element, :air_element]],
+  [:ore, [:fire_element, :earth_element]],
+  [:ice_element, [:water_element, :air_element]],
+  [:plant, [:water_element, :earth_element]],
+  [:harb, [:leaf, :root]],
+  [:leaf, [:plant, :earth_element]],
+  [:powder, [:plant, :air_element]],
+  [:bread, [:powder, :bacteria]],
+  [:egg, [:fire_element, :bacteria]],
+  [:meat, [:earth_element, :egg]],
+  [:fish, [:water_element, :egg]],
+  [:steak, [:meat, :fire_element]],
+  [:grape, [:plant, :ice_element]],
+  [:wine, [:grape, :bacteria]],
+  [:potion, [:water_bottle, :harb]],
+  [:elixir, [:wine, :potion]],
+  [:salt, [:ore, :water_bottle]],
+  [:bacteria, [:mashroom, :grape]],
+  [:root, [:plant, :thunder_element]],
+  [:mashroom, [:root, :air_element]],
+  [:pepper, [:plant, :salt]],
+  [:berry, [:grape, :fire_element]],
+  [:carrot, [:root, :fire_element]],
+  [:gold, [:ore, :elixir]],
+  [:electron, [:thunder_element, :gold]],
+  [:pearl, [:ice_element, :gold]],
+  [:ruby, [:berry, :gold]],
+  [:diamond, [:pearl, :ruby]],
+  [:diamond, [:electron, :ruby]],
+  [:diamond, [:electron, :pearl]]
+]
+
 class Universe
 
   extend Forwardable
@@ -50,7 +119,13 @@ class Universe
     @image = Sprite.new(
       0,
       Window.height/2-height,
-      Image.new(Window.width/2, height, [255,255,255])
+      Image.new(Window.width/2, height, [0,67,255]).tap {|image|
+        (height/16).times {|y|
+          ((Window.width/2)/16).times {|x|
+            image.box_fill(x*16, y*16, x*16+15, y*16+15, [0,47,191]) if (x + (y % 2)) % 2 == 0
+          }
+        }
+      }.box(1, 1, Window.width/2-2, height-2, [255,255,255])
     )
     @image.target = RenderTarget.new(Window.width/2, Window.height/2)
   end
@@ -88,6 +163,7 @@ class Unit < Sprite
     @body = CP::Body.new(1, CP::INFINITY)
     @body.p = CP::Vec2.new(x, y)
     @shape = CP::Shape::Circle.new(body, image.height / 2, CP::Vec2.new(0, 0))
+    @shape.layers = 0b01
     self.collision = [image.width / 2, image.width / 2, image.width / 2]
   end
 
@@ -113,6 +189,7 @@ class Player < Unit
     @body = CP::Body.new(10, CP::INFINITY)
     @body.p = CP::Vec2.new(x, y)
     @shape = CP::Shape::Circle.new(body, image.height / 2, CP::Vec2.new(0, 0))
+    @shape.layers = 0b10
     @material = nil
     @hand = Sprite.new(x, y)
     @hand.collision = [8, 8, 8]
@@ -140,7 +217,7 @@ class Player < Unit
     hand.y = self.y
   end
 
-  def glab_material(material)
+  def grab_material(material)
     material.body.v = CP::Vec2.new(0, 0)
     @material = material
     @hand.image = @material.image
@@ -160,7 +237,6 @@ class Player < Unit
 end
 
 class ItemData < Struct.new(:name, :score, :icon)
-  
 end
 
 class Item
@@ -258,131 +334,194 @@ class Medium < Unit
 
 end
 
-item_db = ItemDB.new(Hash[*(%w(
-  fire_element:1
-  water_element:1
-  air_element:1
-  earth_element:1
-  steam:2
-  thunder_element:2
-  rock:2
-  ice_element:2
-  tree:2
-  sand:2
-).map.with_index {|data, i|
-  name, score = data.split(':')
-  [i+1, ItemData.new(name, score, Image.new(16,16).circle_fill(8,8,8,[255,255,255]))]
-}).flatten])
+class GameData
 
-recipe_db = RecipeDB.new([
-  [item_db[:steam].id, [item_db[:fire_element].id, item_db[:water_element].id]],
-  [item_db[:thunder_element].id, [item_db[:fire_element].id, item_db[:air_element].id]]
-].map {|product, ingredients| Recipe.new(product, ingredients)})
+  attr_accessor :score, :time
+  attr_reader :player, :universe, :materials, :phenomenon, :item_db, :recipe_db
 
-universe = Universe.new(100, 32)
-materials = []
-
-phenomenon = Fiber.new do
-  i = 0
-  loop do
-    i += 1
-    materials << Medium.pop(
-      item_db[1]
-    ).tap do |material|
-      material.shape.e = 0.66
-      material.shape.u = 0.33
-      material.target = universe.render_target
-      universe.add_material(material)
-    end
-    60.times { Fiber.yield }
+  def initialize
+    @render_target = RenderTarget.new(Window.width/2,Window.height/2)
+    @font = Font.new(12)
+    prepare_db
+    setup
   end
-end
 
-animation_image = Image.load_tiles("gfx/player.png", 4, 4)
-player = Player.new(0, Window.height/2-44, animation_image[0]).tap do |player|
-  player.turn_right
-  player.animation_image = animation_image
-  player.add_animation(:wait_right, 0, [8])
-  player.add_animation(:wait_left, 0, [0])
-  player.add_animation(:walk_right, 6, [9,10,11,10])
-  player.add_animation(:walk_left, 6, [1,2,3,2])
-  player.start_animation(:wait_right)
-  player.shape.e = 0.1
-  player.shape.u = 1.0
-  player.target = universe.render_target
-end
-universe.add_material(player)
+  def prepare_db
+    item_images = Image.load_tiles("gfx/item.png", 11, 3)
+    @item_db = ItemDB.new(Hash[*(ITEM_SOURCE.map.with_index {|data, i|
+      name, score = data.split(':')
+      score = score.to_i
+      [i+1, ItemData.new(name, score, item_images[i])]
+    }).flatten])
 
-Window.mag_filter = TEXF_POINT
-Window.loop do
-  phenomenon.resume
-  player.body.apply_impulse(CP::Vec2.new(Input.x * 150, 0), CP::Vec2.new(0, 0))
-  player.body.v = CP::Vec2.new(Input.x * 75, player.body.v.y) if player.body.v.x.abs > 75
-  if Input.x < 0
-    player.change_animation(:walk_left)
-    player.turn_left
-  elsif Input.x > 0
-    player.change_animation(:walk_right)
-    player.turn_right
-  else
-    player.change_animation([:wait_left, :wait_right][player.direction])
+    @recipe_db = RecipeDB.new(RECIPE_SOURCE.map {|product, ingredients|
+      Recipe.new(@item_db[product].id, ingredients.map {|ingredient|
+        @item_db[ingredient].id
+      })
+    })
   end
-  if Input.key_push?(K_Z)
-    if player.material
-      material = player.release_material
-      universe.add_material(material)
-      materials.push(material)
-      material.body.apply_impulse(
-        CP::Vec2.new(player.body.v.x + [-1,1][player.direction] * 33, -33),
-        CP::Vec2.new(0, 0)
-      )
-    else
-      materials.each do |material|
-        if player.hand === material
-          player.glab_material(material)
-          universe.remove_material(material)
-          materials.delete(material)
-          break
-        end
+
+  def setup
+    @score = 123400
+    @time = 1
+    @timer = Fiber.new do
+      loop do
+        60.times { Fiber.yield }
+        @time -= 1
       end
     end
+
+    @universe = Universe.new(100, 80)
+    @materials = []
+
+    @phenomenon = Fiber.new do
+      i = 0
+      loop do
+        i += 1
+        @materials << Medium.pop(
+          @item_db[[*1..4].sample]
+        ).tap do |material|
+          material.shape.e = 0.66
+          material.shape.u = 0.33
+          material.target = @universe.render_target
+          @universe.add_material(material)
+        end
+        (120+@materials.size*2).times { Fiber.yield }
+      end
+    end
+
+    animation_image = Image.load_tiles("gfx/player.png", 4, 4)
+    @player = Player.new(0, Window.height/2-92, animation_image[0]).tap do |player|
+      player.turn_right
+      player.animation_image = animation_image
+      player.add_animation(:wait_right, 0, [8])
+      player.add_animation(:wait_left, 0, [0])
+      player.add_animation(:walk_right, 6, [9,10,11,10])
+      player.add_animation(:walk_left, 6, [1,2,3,2])
+      player.start_animation(:wait_right)
+      player.shape.e = 0.1
+      player.shape.u = 1.0
+      player.target = universe.render_target
+    end
+    @universe.add_material(player)
   end
-  if Input.key_push?(K_X)
-    if player.material
-      materials.each do |material|
-        if player.hand === material
-          if found = recipe_db.find(material.id, player.material.id)
+
+  def cleanup
+    @score = 0
+    @timer = nil
+    @universe = nil
+    @materials = []
+    @phenomenon = nil
+    @player = nil
+  end
+
+  def update
+    @timer.resume
+    return if @time <= 0
+    phenomenon.resume if materials.size < 20
+    player.body.apply_impulse(CP::Vec2.new(Input.x * 150, 0), CP::Vec2.new(0, 0))
+    player.body.v = CP::Vec2.new(Input.x * 75, player.body.v.y) if player.body.v.x.abs > 75
+    if Input.x < 0
+      player.change_animation(:walk_left)
+      player.turn_left
+    elsif Input.x > 0
+      player.change_animation(:walk_right)
+      player.turn_right
+    else
+      player.change_animation([:wait_left, :wait_right][player.direction])
+    end
+    if Input.key_push?(K_Z)
+      if player.material
+        material = player.release_material
+        universe.add_material(material)
+        materials.push(material)
+        material.body.apply_impulse(
+          CP::Vec2.new(player.body.v.x + [-1,1][player.direction] * 33, -33),
+          CP::Vec2.new(0, 0)
+        )
+      else
+        materials.each do |material|
+          if player.hand === material
+            player.grab_material(material)
             universe.remove_material(material)
             materials.delete(material)
-            old = player.release_material
-            material = Medium.new(
-              old.x,
-              old.y,
-              item_db[found]
-            ).tap do |material|
-              material.shape.e = 0.66
-              material.shape.u = 0.33
-              material.target = universe.render_target
-            end
-            universe.add_material(material)
-            materials.push(material)
-            material.body.apply_impulse(
-              CP::Vec2.new(0, -50),
-              CP::Vec2.new(0, 0)
-            )
             break
           end
         end
       end
     end
+    if Input.key_push?(K_X)
+      if player.material
+        materials.each do |material|
+          if player.hand === material
+            if found = recipe_db.find(material.id, player.material.id)
+              universe.remove_material(material)
+              materials.delete(material)
+              old = player.release_material
+              player.grab_material(Medium.new(
+                old.x,
+                old.y,
+                item_db[found]
+              ).tap {|material|
+                material.body.apply_impulse(
+                  CP::Vec2.new(player.body.v.x + [-1,1][player.direction] * 33, -33),
+                  CP::Vec2.new(0, 0)
+                )
+                material.shape.e = 0.66
+                material.shape.u = 0.33
+                material.target = universe.render_target
+              })
+              break
+            end
+          end
+        end
+      end
+    end
+    if Input.key_push?(K_DOWN)
+      if player.material
+        material = player.release_material
+        @score += material.item.data.score
+      end
+    end
+    player.resume_animation
+    universe.update
+    player.update
+    materials.each(&:update)
   end
-  player.resume_animation
-  universe.update
-  player.update
-  materials.each(&:update)
-  universe.render
-  player.render
-  materials.each(&:render)
-  Window.draw_scale(Window.width/4, Window.height/4, universe.render_target, 2, 2)
+
+  def render
+    universe.render
+    materials.each(&:render)
+    player.render
+    Window.draw_scale(Window.width/4, Window.height/4, universe.render_target, 2, 2)
+    @render_target.draw_font(20, Window.height/2-60, 'TIME', @font, {color:[255,255,255]})
+    @render_target.draw_font(Window.width/2-80, Window.height/2-60, 'SCORE', @font, {color:[255,255,255]})
+    @render_target.draw_font(Window.width/2-20-@score.to_s.size*6, Window.height/2-40, @score.to_s, @font, {color:[255,255,255]})
+    @render_target.draw_font(40+(20-@time.to_s.size*6), Window.height/2-40, @time.to_s, @font, {color:[255,255,255]})
+    Window.draw_scale(Window.width/4, Window.height/4, @render_target, 2, 2)
+  end
+
+  def render_gameover
+    @render_target.draw_font((Window.width/2-56)/2-12, (Window.height/2-12)/2+12, 'SCORE', @font, {color:[255,255,255]})
+    @render_target.draw_font((Window.width/2-56)/2+(72-@score.to_s.size*6), (Window.height/2-12)/2+12, @score.to_s, @font, {color:[255,255,255]})
+    @render_target.draw_font((Window.width/2-56)/2, (Window.height/2-12)/2-12, 'GAMEOVER', @font, {color:[255,255,255]})
+    Window.draw_scale(Window.width/4, Window.height/4, @render_target, 2, 2)
+  end
+
+end
+
+game_data = GameData.new
+
+Window.mag_filter = TEXF_POINT
+Window.loop do
+  if game_data.time > 0
+    game_data.update
+    game_data.render
+  else
+    game_data.render_gameover
+    if Input.key_push?(K_Z)
+      game_data.setup
+    end
+  end
 end
 

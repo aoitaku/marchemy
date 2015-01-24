@@ -33,4 +33,5 @@ Twitter のハッシュタグは [#hgj2015](https://twitter.com/hashtag/hgj2015)
 | 後半のの開発  
 2015-01-25 07:30
 
-
+## 利用素材
+- アイテムアイコン : [Escape](http://escape.client.jp/index.html)
