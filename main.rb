@@ -213,8 +213,8 @@ class Player < Unit
     super
     self.x = body.p.x - image.width / 2
     self.y = body.p.y - image.height / 2
-    hand.x = self.x + [-1,1][@direction] * 8
-    hand.y = self.y
+    hand.x = self.x
+    hand.y = self.y - 2
   end
 
   def grab_material(material)
@@ -362,8 +362,8 @@ class GameData
   end
 
   def setup
-    @score = 123400
-    @time = 1
+    @score = 0
+    @time = 600
     @timer = Fiber.new do
       loop do
         60.times { Fiber.yield }
@@ -398,6 +398,10 @@ class GameData
       player.add_animation(:wait_left, 0, [0])
       player.add_animation(:walk_right, 6, [9,10,11,10])
       player.add_animation(:walk_left, 6, [1,2,3,2])
+      player.add_animation(:wait_right_handsup, 0, [12])
+      player.add_animation(:wait_left_handsup, 0, [4])
+      player.add_animation(:walk_right_handsup, 6, [13,14,15,14])
+      player.add_animation(:walk_left_handsup, 6, [5,6,7,6])
       player.start_animation(:wait_right)
       player.shape.e = 0.1
       player.shape.u = 1.0
@@ -422,13 +426,27 @@ class GameData
     player.body.apply_impulse(CP::Vec2.new(Input.x * 150, 0), CP::Vec2.new(0, 0))
     player.body.v = CP::Vec2.new(Input.x * 75, player.body.v.y) if player.body.v.x.abs > 75
     if Input.x < 0
-      player.change_animation(:walk_left)
-      player.turn_left
+      if player.material
+        player.change_animation(:walk_left_handsup)
+        player.turn_left
+      else
+        player.change_animation(:walk_left)
+        player.turn_left
+      end
     elsif Input.x > 0
-      player.change_animation(:walk_right)
-      player.turn_right
+      if player.material
+        player.change_animation(:walk_right_handsup)
+        player.turn_right
+      else
+        player.change_animation(:walk_right)
+        player.turn_right
+      end
     else
-      player.change_animation([:wait_left, :wait_right][player.direction])
+      if player.material
+        player.change_animation([:wait_left_handsup, :wait_right_handsup][player.direction])
+      else
+        player.change_animation([:wait_left, :wait_right][player.direction])
+      end
     end
     if Input.key_push?(K_Z)
       if player.material
