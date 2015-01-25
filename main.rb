@@ -347,7 +347,7 @@ class GameData
   end
 
   def prepare_db
-    item_images = Image.load_tiles("gfx/item.png", 11, 3)
+    item_images = Image.load_tiles(__dir__+"/gfx/item.png", 11, 3)
     @item_db = ItemDB.new(Hash[*(ITEM_SOURCE.map.with_index {|data, i|
       name, score = data.split(':')
       score = score.to_i
@@ -390,7 +390,7 @@ class GameData
       end
     end
 
-    animation_image = Image.load_tiles("gfx/player.png", 4, 4)
+    animation_image = Image.load_tiles(__dir__+"/gfx/player.png", 4, 4)
     @player = Player.new(0, Window.height/2-92, animation_image[0]).tap do |player|
       player.turn_right
       player.animation_image = animation_image
